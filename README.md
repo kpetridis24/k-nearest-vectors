@@ -1,5 +1,7 @@
 # k-nearest-vectors
 
+CPU and memory efficient implementations for calculating k nearest vectors 
+
 ## Motivation
 
 Computing the **distance between high dimensional vectors** is widely applicable in modern technologies. It is used extensively in
