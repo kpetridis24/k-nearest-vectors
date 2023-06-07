@@ -6,7 +6,7 @@ points increase -> VPT
 */
 const (
 	NumOfVectors           uint32 = 100000
-	NumOfDimensions        uint16 = 255
+	NumOfDimensions        uint16 = 100
 	Min                           = -50
 	Max                           = 50
 	K                             = 20
