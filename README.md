@@ -14,5 +14,5 @@ in smaller datasets.
 I have 3 major implementations in this codebase:
 
 - **Naive approach** to compute the k nearest vectors to a given query
-- **Parallel approach** using **Go routines** 
-- **Hybrid Indexed-Parallel approach** using **Vantage Point Tree** structure, optimised for space efficiency and branch pruning with parallelised search across branches
+- **Parallel approach** using **Go routines**, parallelizing the naive approach
+- **Hybrid Indexed-Parallel approach** using **Vantage Point Tree** structure, optimised for space efficiency and branch pruning with parallelized search across branches
