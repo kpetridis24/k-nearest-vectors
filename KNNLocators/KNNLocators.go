@@ -9,9 +9,11 @@ import (
 )
 
 const (
-	NumOfVectors    = Constants.NumOfVectors
-	NumOfDimensions = Constants.NumOfDimensions
-	MaxCPUs         = Constants.MaxCPUs
+	NumOfVectors           = Constants.NumOfVectors
+	NumOfDimensions        = Constants.NumOfDimensions
+	MaxCPUs                = Constants.MaxCPUs
+	ThresholdToRunParallel = Constants.ThresholdToRunParallel
+	MaximumGoroutines      = Constants.MaximumGoroutines
 )
 
 type VPTreeNode struct {
@@ -207,6 +209,11 @@ func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTre
 	return node
 }
 
+type NodeDistance struct {
+	node     *[]int8
+	distance float64
+}
+
 func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, k int) []float64 {
 	kNearest := make([]int8, 0, (k+1)*int(NumOfDimensions))
 	kDistances := make([]float64, 0, k+1)
@@ -215,33 +222,93 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 	furthestKnnSoFar := math.MaxFloat64
 
 	for len(queue) > 0 {
-		node := queue[0]
-		queue = queue[1:]
-
-		if node == nil {
+		if len(queue) >= ThresholdToRunParallel {
+			SearchInParallel(&queue, query, &kNearest, &kDistances, &furthestKnnSoFar, k)
 			continue
 		}
-
-		distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
-
-		if distance < furthestKnnSoFar {
-			kNearest = append(kNearest, *node.vantagePoint...)
-			kDistances = append(kDistances, distance)
-			util.SortBasedOn(&kNearest, &kDistances)
-			if len(kDistances) > k {
-				kDistances = kDistances[:k]
-				kNearest = kNearest[:k*int(NumOfDimensions)]
-			}
-			furthestKnnSoFar = kDistances[len(kDistances)-1]
-		}
-
-		if distance < node.radius+furthestKnnSoFar {
-			queue = append(queue, node.inside)
-		}
-		if distance >= node.radius-furthestKnnSoFar {
-			queue = append(queue, node.outside)
-		}
+		SearchSequential(&queue, query, &kNearest, &kDistances, &furthestKnnSoFar, k)
 	}
 
 	return kDistances[:k]
+}
+
+func SearchSequential(queue *[]*VPTreeNode, query, kNearest *[]int8, kDistances *[]float64, furthestKnnSoFar *float64, k int) {
+	node := (*queue)[0]
+	*queue = (*queue)[1:]
+
+	distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
+
+	if distance < *furthestKnnSoFar {
+		*kNearest = append(*kNearest, *node.vantagePoint...)
+		*kDistances = append(*kDistances, distance)
+		util.SortBasedOn(kNearest, kDistances)
+		if len(*kDistances) > k {
+			*kDistances = (*kDistances)[:k]
+			*kNearest = (*kNearest)[:k*int(NumOfDimensions)]
+		}
+		*furthestKnnSoFar = (*kDistances)[len(*kDistances)-1]
+	}
+
+	if distance < node.radius+*furthestKnnSoFar && node.inside != nil {
+		*queue = append(*queue, node.inside)
+	}
+	if distance >= node.radius-*furthestKnnSoFar && node.outside != nil {
+		*queue = append(*queue, node.outside)
+	}
+}
+
+func SearchInParallel(queue *[]*VPTreeNode, query, kNearest *[]int8, kDistances *[]float64, furthestKnnSoFar *float64, k int) {
+	nodesToExplore := make(chan *VPTreeNode, 2*MaximumGoroutines)
+	localKnn := make(chan NodeDistance, MaximumGoroutines)
+	numOfRoutines := int(math.Min(float64(len(*queue)), MaximumGoroutines))
+
+	wg := sync.WaitGroup{}
+	wg.Add(numOfRoutines)
+
+	for i := 0; i < numOfRoutines; i++ {
+		q := i
+		go func(furthest float64, waitGroup *sync.WaitGroup,
+			nodesToExplore chan<- *VPTreeNode, knnChannel chan<- NodeDistance) {
+			node := (*queue)[q]
+
+			distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
+
+			if distance < furthest {
+				knnChannel <- NodeDistance{node: node.vantagePoint, distance: distance}
+			}
+
+			if distance < node.radius+furthest && node.inside != nil {
+				nodesToExplore <- node.inside
+			}
+
+			if distance >= node.radius-furthest && node.outside != nil {
+				nodesToExplore <- node.outside
+			}
+
+			waitGroup.Done()
+		}(*furthestKnnSoFar, &wg, nodesToExplore, localKnn)
+	}
+
+	wg.Wait()
+	close(nodesToExplore)
+	close(localKnn)
+
+	*queue = (*queue)[numOfRoutines:]
+
+	for node := range nodesToExplore {
+		*queue = append(*queue, node)
+	}
+
+	for pair := range localKnn {
+		if pair.distance < *furthestKnnSoFar {
+			*kNearest = append(*kNearest, *pair.node...)
+			*kDistances = append(*kDistances, pair.distance)
+			util.SortBasedOn(kNearest, kDistances)
+			if len(*kDistances) > k {
+				*kDistances = (*kDistances)[:k]
+				*kNearest = (*kNearest)[:k*int(NumOfDimensions)]
+			}
+			*furthestKnnSoFar = (*kDistances)[len(*kDistances)-1]
+		}
+	}
 }
