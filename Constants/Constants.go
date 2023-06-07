@@ -1,8 +1,12 @@
 package Constants
 
+/*
+dimensions increase -> parallel
+points increase -> VPT
+*/
 const (
-	NumOfVectors    uint32 = 100000
-	NumOfDimensions uint16 = 255
+	NumOfVectors    uint32 = 10000
+	NumOfDimensions uint16 = 2500
 	Min                    = -50
 	Max                    = 50
 	K                      = 20

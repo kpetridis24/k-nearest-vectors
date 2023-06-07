@@ -52,6 +52,13 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 	wg := sync.WaitGroup{}
 	wg.Add(MaxCPUs)
 
+	/*
+		Spawning one goroutine per iteration is highly redundant and causes significant
+		overhead during the creation and scheduling of the goroutines. This approach
+		spawns as many goroutines as available CPUs to optimise usage of resources. Each
+		goroutine updates a part of the total array. There are no data races since there
+		are no overlapping portions of the array that are assigned to different goroutines.
+	*/
 	for i := 0; i < MaxCPUs; i++ {
 		go func(index int, waitGroup *sync.WaitGroup) {
 			defer waitGroup.Done()
@@ -88,8 +95,16 @@ func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTre
 	distances := make([]float64, numPoints)
 	indices := make([]int, numPoints)
 
+	/*
+		These values were obtained after manual fine-tuning for 1e-6 vectors of 256 dimensions
+		each. Initially, we assign maxCPUs to work in parallel, spawning the same number
+		of goroutines. As the number of points decreases after some iterations, we decrease
+		the number of CPUs, avoiding letting the introduced overhead to surpass the benefits
+		of parallelism. Finally, when number of points are below the threshold, we move on
+		with the sequential algorithm, which is more efficient for small number of points.
+	*/
 	if numPoints >= int(NumOfVectors)/8 {
-		numCPUs := 12
+		numCPUs := MaxCPUs
 		if numPoints <= int(numPoints)/4 {
 			numCPUs = 6
 		}
@@ -127,6 +142,16 @@ func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTre
 	insidePoints := make([]int8, 0, middle)
 	outsidePoints := make([]int8, 0, numPoints-middle)
 
+	/*
+		These variables keep track of the furthest point from our current vantage
+		point in the dataset. The reason for this is, selecting the furthest point
+		from the current vantage point, as the next vantage point, results in
+		noticeable boost in performance. This is because distant vantage points
+		split the space in a more balanced manner, designating a clear separation
+		between the near neighbors of each, and with all intermediate points.
+		Testing and benchmarking indicates that we consistently prune more branches
+		while searching, using this technique.
+	*/
 	furthestOutsideDistance := -math.MaxFloat64
 	furthestInsideDistance := -math.MaxFloat64
 	furthestOutsidePointLocation := 0
@@ -154,6 +179,10 @@ func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTre
 		numInsidePoints++
 	}
 
+	/*
+		Put the furthest point from the current vantage point last, so they become the
+		next vantage points.
+	*/
 	if numInsidePoints > 0 {
 		for l := 0; l < int(NumOfDimensions); l++ {
 			temp := insidePoints[furthestInsidePointLocation*int(NumOfDimensions)+l]
@@ -194,6 +223,7 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 		}
 
 		distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
+
 		if distance < furthestKnnSoFar {
 			kNearest = append(kNearest, *node.vantagePoint...)
 			kDistances = append(kDistances, distance)

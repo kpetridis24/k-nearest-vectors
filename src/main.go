@@ -1,11 +1,5 @@
 package main
 
-//// #cgo CFLAGS: -g -Wall -O3 -fopenmp
-//// #cgo LDFLAGS: -fopenmp
-//// #include <stdlib.h>
-//// #include "test.c"
-//import "C"
-
 import (
 	"Weaviate/Constants"
 	knn "Weaviate/KNNLocators"
@@ -31,25 +25,28 @@ func main() {
 	elapsed := time.Since(start)
 	fmt.Println("VPT index created: ", elapsed)
 
+	// benchmark indexed query using Vantage Point Tree
 	start = time.Now()
 	res1 := vpTree.SearchKNearest(root, query, Constants.K)
 	elapsed = time.Since(start)
 	fmt.Println("VPTree kNN: ", elapsed)
 
+	// benchmark parallel query using goroutines
 	start = time.Now()
 	res2 := parallel.SearchKNearest(vectorsInRowMajor, query, Constants.K)
 	elapsed = time.Since(start)
 	fmt.Println("Parallel kNN: ", elapsed)
 
+	// benchmark naive query
 	start = time.Now()
 	res3 := naive.SearchKNearestNaive(vectorsIn2D, query, Constants.K)
 	elapsed = time.Since(start)
 	fmt.Println("Naive kNN: ", elapsed)
 
+	// validate results
 	for i := 0; i < Constants.K; i++ {
 		if res1[i] != res2[i] || res1[i] != res3[i] || res2[i] != res3[i] {
 			panic("[ERROR]: K nearest neighbors not consistent amongst methods")
 		}
 	}
-
 }

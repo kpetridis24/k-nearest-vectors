@@ -5,6 +5,11 @@ import (
 	"sort"
 )
 
+/*
+CalculateL2Norm
+Calculates the Euclidean distance between two vectors. In this version, the
+square root is omitted, increasing the performance even more.
+*/
 func CalculateL2Norm(vector1, vector2 *[]int8, size uint16) float64 {
 	sumOfSquares := 0.0
 	var i uint16 = 0
@@ -15,6 +20,20 @@ func CalculateL2Norm(vector1, vector2 *[]int8, size uint16) float64 {
 	return sumOfSquares
 }
 
+/*
+SortBasedOn
+Sorts an array "points" in ascending order, based on the corresponding values in "keys"
+For example:
+before:
+
+	points = {1, 2, 3, 4}
+	keys = {5, 2, 4, 3}
+
+after:
+
+	points = {2, 4, 3, 1}
+	keys = {2, 3, 4, 5}
+*/
 func SortBasedOn(points *[]int8, keys *[]float64) {
 	numPoints := len(*points) / int(Constants.NumOfDimensions)
 	indices := make([]int, numPoints)
