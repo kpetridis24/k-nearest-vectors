@@ -51,15 +51,10 @@ func (locator NaiveKnnLocator) SearchKNearestNaive(points *[][]int8, query *[]in
 }
 
 func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) []float64 {
-	distances := make([]float64, 0, k)
-	localDistances := make([][]float64, MaxRoutinesForParallel)
-	for i := 0; i < MaxRoutinesForParallel; i++ {
-		localDistances[i] = make([]float64, 0, NumOfVectors/MaxRoutinesForParallel)
-	}
-
+	localDistances := make([]float64, NumOfVectors)
 	wg := sync.WaitGroup{}
 	wg.Add(MaxRoutinesForParallel)
-
+	chunkSize := int(NumOfVectors / MaxRoutinesForParallel)
 	/*
 		Spawning one goroutine per iteration is highly redundant and causes significant
 		overhead during the creation and scheduling of the goroutines. This approach
@@ -70,20 +65,21 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 	for i := 0; i < MaxRoutinesForParallel; i++ {
 		go func(index int, waitGroup *sync.WaitGroup, localDistances *[]float64) {
 			defer waitGroup.Done()
-
+			count := 0
 			for j := index; j < int(NumOfVectors); j += MaxRoutinesForParallel {
-				vector := (*points)[j*int(NumOfDimensions) : (j+1)*int(Constants.NumOfDimensions)]
-				distance := util.CalculateL2Norm(query, &vector, Constants.NumOfDimensions)
-				*localDistances = append(*localDistances, distance)
+				vector := (*points)[j*int(NumOfDimensions) : (j+1)*int(NumOfDimensions)]
+				distance := util.CalculateL2Norm(query, &vector, NumOfDimensions)
+				(*localDistances)[index*chunkSize+count] = distance
+				count++
 			}
 
-			sort.Float64s(*localDistances)
-		}(i, &wg, &localDistances[i])
+			sort.Float64s((*localDistances)[index*chunkSize : (index+1)*chunkSize])
+		}(i, &wg, &localDistances)
 	}
 
 	wg.Wait()
-	pointers := make([]uint8, MaxRoutinesForParallel)
-
+	pointers := make([]int, MaxRoutinesForParallel)
+	distances := make([]float64, 0, k)
 	/*
 		Here we perform a regular merge to get the k smallest values, but instead of
 		merging two lists (like in merge sort), we merge MaxRoutinesForParallel lists.
@@ -92,12 +88,12 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 		minimumDistance := math.MaxFloat64
 		minimumIndex := -1
 		for i := 0; i < MaxRoutinesForParallel; i++ {
-			if localDistances[i][pointers[i]] < minimumDistance {
-				minimumDistance = localDistances[i][pointers[i]]
+			if localDistances[i*chunkSize+pointers[i]] < minimumDistance {
+				minimumDistance = localDistances[i*chunkSize+pointers[i]]
 				minimumIndex = i
 			}
 		}
-		distances = append(distances, localDistances[minimumIndex][pointers[minimumIndex]])
+		distances = append(distances, localDistances[minimumIndex*chunkSize+pointers[minimumIndex]])
 		pointers[minimumIndex]++
 	}
 
