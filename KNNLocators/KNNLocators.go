@@ -9,11 +9,12 @@ import (
 )
 
 const (
-	NumOfVectors           = Constants.NumOfVectors
-	NumOfDimensions        = Constants.NumOfDimensions
-	MaxCPUs                = Constants.MaxCPUs
-	ThresholdToRunParallel = Constants.ThresholdToRunParallel
-	MaximumGoroutines      = Constants.MaximumGoroutines
+	NumOfVectors             = Constants.NumOfVectors
+	NumOfDimensions          = Constants.NumOfDimensions
+	MaxCPUs                  = Constants.MaxRoutinesForParallel
+	ThresholdToRunParallel   = Constants.ThresholdToRunParallel
+	MaxRoutinesForTreeSearch = Constants.MaxRoutinesForTreeSearch
+	MaxRoutinesForParallel   = Constants.MaxRoutinesForParallel
 )
 
 type VPTreeNode struct {
@@ -51,13 +52,13 @@ func (locator NaiveKnnLocator) SearchKNearestNaive(points *[][]int8, query *[]in
 
 func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) []float64 {
 	distances := make([]float64, 0, k)
-	localDistances := make([][]float64, Constants.MaxCPUs)
-	for i := 0; i < Constants.MaxCPUs; i++ {
-		localDistances[i] = make([]float64, 0, Constants.NumOfVectors/Constants.MaxCPUs)
+	localDistances := make([][]float64, MaxRoutinesForParallel)
+	for i := 0; i < MaxRoutinesForParallel; i++ {
+		localDistances[i] = make([]float64, 0, NumOfVectors/MaxRoutinesForParallel)
 	}
 
 	wg := sync.WaitGroup{}
-	wg.Add(Constants.MaxCPUs)
+	wg.Add(MaxRoutinesForParallel)
 
 	/*
 		Spawning one goroutine per iteration is highly redundant and causes significant
@@ -66,12 +67,12 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 		goroutine updates a part of the total array. There are no data races since there
 		are no overlapping portions of the array that are assigned to different goroutines.
 	*/
-	for i := 0; i < Constants.MaxCPUs; i++ {
+	for i := 0; i < MaxRoutinesForParallel; i++ {
 		go func(index int, waitGroup *sync.WaitGroup, localDistances *[]float64) {
 			defer waitGroup.Done()
 
-			for j := index; j < int(Constants.NumOfVectors); j += Constants.MaxCPUs {
-				vector := (*points)[j*int(Constants.NumOfDimensions) : (j+1)*int(Constants.NumOfDimensions)]
+			for j := index; j < int(NumOfVectors); j += MaxRoutinesForParallel {
+				vector := (*points)[j*int(NumOfDimensions) : (j+1)*int(Constants.NumOfDimensions)]
 				distance := util.CalculateL2Norm(query, &vector, Constants.NumOfDimensions)
 				*localDistances = append(*localDistances, distance)
 			}
@@ -81,16 +82,16 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 	}
 
 	wg.Wait()
-	pointers := make([]uint8, Constants.MaxCPUs)
+	pointers := make([]uint8, MaxRoutinesForParallel)
 
 	/*
 		Here we perform a regular merge to get the k smallest values, but instead of
-		merging two lists (like in merge sort), we merge Constants.MaxCPUs lists.
+		merging two lists (like in merge sort), we merge MaxRoutinesForParallel lists.
 	*/
 	for len(distances) < k {
 		minimumDistance := math.MaxFloat64
 		minimumIndex := -1
-		for i := 0; i < Constants.MaxCPUs; i++ {
+		for i := 0; i < MaxRoutinesForParallel; i++ {
 			if localDistances[i][pointers[i]] < minimumDistance {
 				minimumDistance = localDistances[i][pointers[i]]
 				minimumIndex = i
@@ -249,9 +250,9 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 
 	for len(queue) > 0 {
 		if len(queue) >= ThresholdToRunParallel {
-			nodesToExplore := make(chan *VPTreeNode, 2*MaximumGoroutines)
-			localKnn := make(chan NodeDistance, MaximumGoroutines)
-			numOfRoutines := int(math.Min(float64(len(queue)), MaximumGoroutines))
+			nodesToExplore := make(chan *VPTreeNode, 2*MaxRoutinesForTreeSearch)
+			localKnn := make(chan NodeDistance, MaxRoutinesForTreeSearch)
+			numOfRoutines := int(math.Min(float64(len(queue)), MaxRoutinesForTreeSearch))
 
 			wg := sync.WaitGroup{}
 			wg.Add(numOfRoutines)
