@@ -50,9 +50,14 @@ func (locator NaiveKnnLocator) SearchKNearestNaive(points *[][]int8, query *[]in
 }
 
 func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) []float64 {
-	distances := make([]float64, NumOfVectors)
+	distances := make([]float64, 0, k)
+	localDistances := make([][]float64, Constants.MaxCPUs)
+	for i := 0; i < Constants.MaxCPUs; i++ {
+		localDistances[i] = make([]float64, 0, Constants.NumOfVectors/Constants.MaxCPUs)
+	}
+
 	wg := sync.WaitGroup{}
-	wg.Add(MaxCPUs)
+	wg.Add(Constants.MaxCPUs)
 
 	/*
 		Spawning one goroutine per iteration is highly redundant and causes significant
@@ -61,20 +66,41 @@ func (locator ParallelKnnLocator) SearchKNearest(points, query *[]int8, k int) [
 		goroutine updates a part of the total array. There are no data races since there
 		are no overlapping portions of the array that are assigned to different goroutines.
 	*/
-	for i := 0; i < MaxCPUs; i++ {
-		go func(index int, waitGroup *sync.WaitGroup) {
+	for i := 0; i < Constants.MaxCPUs; i++ {
+		go func(index int, waitGroup *sync.WaitGroup, localDistances *[]float64) {
 			defer waitGroup.Done()
-			for j := index; j < int(NumOfVectors); j += MaxCPUs {
-				vector := (*points)[j*int(NumOfDimensions) : (j+1)*int(NumOfDimensions)]
-				distance := util.CalculateL2Norm(query, &vector, NumOfDimensions)
-				distances[j] = distance
+
+			for j := index; j < int(Constants.NumOfVectors); j += Constants.MaxCPUs {
+				vector := (*points)[j*int(Constants.NumOfDimensions) : (j+1)*int(Constants.NumOfDimensions)]
+				distance := util.CalculateL2Norm(query, &vector, Constants.NumOfDimensions)
+				*localDistances = append(*localDistances, distance)
 			}
-		}(i, &wg)
+
+			sort.Float64s(*localDistances)
+		}(i, &wg, &localDistances[i])
 	}
 
 	wg.Wait()
-	sort.Float64s(distances[:])
-	return distances[:k]
+	pointers := make([]uint8, Constants.MaxCPUs)
+
+	/*
+		Here we perform a regular merge to get the k smallest values, but instead of
+		merging two lists (like in merge sort), we merge Constants.MaxCPUs lists.
+	*/
+	for len(distances) < k {
+		minimumDistance := math.MaxFloat64
+		minimumIndex := -1
+		for i := 0; i < Constants.MaxCPUs; i++ {
+			if localDistances[i][pointers[i]] < minimumDistance {
+				minimumDistance = localDistances[i][pointers[i]]
+				minimumIndex = i
+			}
+		}
+		distances = append(distances, localDistances[minimumIndex][pointers[minimumIndex]])
+		pointers[minimumIndex]++
+	}
+
+	return distances
 }
 
 func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTreeNode {
