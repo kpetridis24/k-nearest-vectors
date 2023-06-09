@@ -296,7 +296,7 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 
 		distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
 
-		if distance < furthestKnnSoFar || kNearestVectors.Len() < k {
+		if distance < furthestKnnSoFar {
 			kNearestVectors.Insert(&util.KnnQueueItem{
 				KnnVector:         node.vantagePoint,
 				DistanceFromQuery: distance,

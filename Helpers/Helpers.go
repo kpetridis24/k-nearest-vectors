@@ -45,13 +45,14 @@ type KnnQueueItem struct {
 	DistanceFromQuery float64
 }
 
-// MaxPriorityQueue is an implementation of a binary max heap (binary tree)
+// MaxPriorityQueue using binary max heap maintain structure
 type MaxPriorityQueue struct {
 	array              []KnnQueueItem
 	nextAvailableIndex int
 	capacity           int
 }
 
+// NewMaxPriorityQueue constructor to initialise a priority queue of capacity maximumCapacity
 func NewMaxPriorityQueue(maximumCapacity int) *MaxPriorityQueue {
 	return &MaxPriorityQueue{
 		array:              make([]KnnQueueItem, maximumCapacity),
