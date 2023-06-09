@@ -2,7 +2,7 @@ package Helpers
 
 import (
 	"Weaviate/Constants"
-	"sort"
+	"fmt"
 )
 
 /*
@@ -20,40 +20,114 @@ func CalculateL2Norm(vector1, vector2 *[]int8, size uint16) float64 {
 	return sumOfSquares
 }
 
-/*
-SortBasedOn
-Sorts an array "points" in ascending order, based on the corresponding values in "keys"
-For example:
-before:
-
-	points = {1, 2, 3, 4}
-	keys = {5, 2, 4, 3}
-
-after:
-
-	points = {2, 4, 3, 1}
-	keys = {2, 3, 4, 5}
-*/
-func SortBasedOn(points *[]int8, keys *[]float64) {
-	numPoints := len(*points) / int(Constants.NumOfDimensions)
-	indices := make([]int, numPoints)
-	for i := range indices {
-		indices[i] = i
+func ValidateKnnResults(vptResult *MaxPriorityQueue, parallelResult, naiveResult []float64) {
+	vptResultAsArray := make([]float64, Constants.K)
+	for i := 0; i < Constants.K; i++ {
+		d := vptResult.Pop().DistanceFromQuery
+		vptResultAsArray[i] = d
 	}
 
-	sort.Slice(indices, func(i, j int) bool {
-		return (*keys)[indices[i]] < (*keys)[indices[j]]
-	})
+	for i := 0; i < Constants.K; i++ {
+		if vptResultAsArray[Constants.K-1-i] != parallelResult[i] ||
+			vptResultAsArray[Constants.K-1-i] != naiveResult[i] ||
+			parallelResult[i] != naiveResult[i] {
 
-	sortedPoints := make([]int8, 0, len(*points))
-	sortedKeys := make([]float64, numPoints)
+			fmt.Println(vptResultAsArray)
+			fmt.Println(parallelResult)
+			fmt.Println(naiveResult)
+			panic("[ERROR]: K nearest neighbors not consistent amongst methods")
+		}
+	}
+}
 
-	for index, sortedIndex := range indices {
-		sortedKeys[index] = (*keys)[sortedIndex]
-		temp := (*points)[sortedIndex*int(Constants.NumOfDimensions) : (sortedIndex+1)*int(Constants.NumOfDimensions)]
-		sortedPoints = append(sortedPoints, temp...)
+type KnnQueueItem struct {
+	KnnVector         *[]int8
+	DistanceFromQuery float64
+}
+
+// MaxPriorityQueue is an implementation of a binary max heap (binary tree)
+type MaxPriorityQueue struct {
+	array              []KnnQueueItem
+	nextAvailableIndex int
+	capacity           int
+}
+
+func NewMaxPriorityQueue(maximumCapacity int) *MaxPriorityQueue {
+	return &MaxPriorityQueue{
+		array:              make([]KnnQueueItem, maximumCapacity),
+		nextAvailableIndex: 0,
+		capacity:           maximumCapacity,
+	}
+}
+
+func (queue *MaxPriorityQueue) Insert(newItem *KnnQueueItem) {
+	queue.array[queue.nextAvailableIndex] = *newItem
+	queue.nextAvailableIndex++
+	currentIndex := queue.nextAvailableIndex - 1
+	parentIndex := (currentIndex - 1) / 2
+
+	for parentIndex > 0 &&
+		queue.array[currentIndex].DistanceFromQuery > queue.array[parentIndex].DistanceFromQuery {
+		queue.array[parentIndex], queue.array[currentIndex] = queue.array[currentIndex], queue.array[parentIndex]
+		currentIndex = parentIndex
+		parentIndex = (currentIndex - 1) / 2
 	}
 
-	copy(*keys, sortedKeys)
-	copy(*points, sortedPoints)
+	// if queue exceeds maximum capacity, pop the max item
+	if queue.nextAvailableIndex == *queue.Capacity() {
+		queue.Pop()
+	}
+}
+
+func (queue *MaxPriorityQueue) Pop() *KnnQueueItem {
+	if queue.nextAvailableIndex == 1 {
+		queue.nextAvailableIndex = 0
+		return &queue.array[0]
+	}
+
+	var root = queue.array[0]
+	queue.array[0] = queue.array[queue.nextAvailableIndex-1]
+	queue.nextAvailableIndex--
+
+	// heapify
+	currentIndex := 0
+	leftChildIndex := 2*currentIndex + 1
+	rightChildIndex := 2*currentIndex + 2
+	maxItemIndex := currentIndex
+
+	for true {
+		if leftChildIndex <= queue.Len() &&
+			queue.array[leftChildIndex].DistanceFromQuery > queue.array[maxItemIndex].DistanceFromQuery {
+			maxItemIndex = leftChildIndex
+		}
+		if rightChildIndex <= queue.Len() &&
+			queue.array[rightChildIndex].DistanceFromQuery > queue.array[maxItemIndex].DistanceFromQuery {
+			maxItemIndex = rightChildIndex
+		}
+
+		if maxItemIndex == currentIndex {
+			return &root
+		}
+
+		queue.array[currentIndex], queue.array[maxItemIndex] = queue.array[maxItemIndex], queue.array[currentIndex]
+
+		currentIndex = maxItemIndex
+		leftChildIndex = 2*currentIndex + 1
+		rightChildIndex = 2*currentIndex + 2
+		maxItemIndex = currentIndex
+	}
+
+	return &root
+}
+
+func (queue *MaxPriorityQueue) Peak() *KnnQueueItem {
+	return &queue.array[0]
+}
+
+func (queue *MaxPriorityQueue) Len() int {
+	return queue.nextAvailableIndex
+}
+
+func (queue *MaxPriorityQueue) Capacity() *int {
+	return &queue.capacity
 }

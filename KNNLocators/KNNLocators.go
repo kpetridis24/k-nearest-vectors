@@ -232,22 +232,16 @@ func (locator VPTreeKnnLocator) BuildIndex(points *[]int8, numPoints int) *VPTre
 	return node
 }
 
-type NodeDistance struct {
-	node     *[]int8
-	distance float64
-}
-
-func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, k int) []float64 {
-	kNearest := make([]int8, 0, (k+1)*int(NumOfDimensions))
-	kDistances := make([]float64, 0, k+1)
+func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, k int) *util.MaxPriorityQueue {
+	kNearestVectors := util.NewMaxPriorityQueue(k + 1)
 	queue := make([]*VPTreeNode, 0, NumOfVectors)
 	queue = append(queue, root)
 	furthestKnnSoFar := math.MaxFloat64
+	var mutex sync.Mutex
 
 	for len(queue) > 0 {
 		if len(queue) >= ThresholdToRunParallel {
-			nodesToExplore := make(chan *VPTreeNode, 2*MaxRoutinesForTreeSearch)
-			localKnn := make(chan NodeDistance, MaxRoutinesForTreeSearch)
+			localKnn := make(chan util.KnnQueueItem, MaxRoutinesForTreeSearch)
 			numOfRoutines := int(math.Min(float64(len(queue)), MaxRoutinesForTreeSearch))
 
 			wg := sync.WaitGroup{}
@@ -255,48 +249,43 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 
 			for i := 0; i < numOfRoutines; i++ {
 				q := i
-				go func(furthest float64, waitGroup *sync.WaitGroup,
-					nodesToExplore chan<- *VPTreeNode, knnChannel chan<- NodeDistance) {
+				go func(furthest float64, waitGroup *sync.WaitGroup, knnChannel chan<- util.KnnQueueItem) {
 					node := (queue)[q]
 
 					distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
 
 					if distance < furthest {
-						knnChannel <- NodeDistance{node: node.vantagePoint, distance: distance}
+						knnChannel <- util.KnnQueueItem{KnnVector: node.vantagePoint, DistanceFromQuery: distance}
 					}
 
 					if distance < node.radius+furthest && node.inside != nil {
-						nodesToExplore <- node.inside
+						mutex.Lock()
+						queue = append(queue, node.inside)
+						mutex.Unlock()
 					}
 
 					if distance >= node.radius-furthest && node.outside != nil {
-						nodesToExplore <- node.outside
+						mutex.Lock()
+						queue = append(queue, node.outside)
+						mutex.Unlock()
 					}
 
 					waitGroup.Done()
-				}(furthestKnnSoFar, &wg, nodesToExplore, localKnn)
+				}(furthestKnnSoFar, &wg, localKnn)
 			}
 
 			wg.Wait()
-			close(nodesToExplore)
 			close(localKnn)
-
 			queue = queue[numOfRoutines:]
 
-			for node := range nodesToExplore {
-				queue = append(queue, node)
-			}
+			for knnItem := range localKnn {
+				if knnItem.DistanceFromQuery < furthestKnnSoFar {
+					kNearestVectors.Insert(&util.KnnQueueItem{
+						KnnVector:         knnItem.KnnVector,
+						DistanceFromQuery: knnItem.DistanceFromQuery,
+					})
 
-			for pair := range localKnn {
-				if pair.distance < furthestKnnSoFar {
-					kNearest = append(kNearest, *pair.node...)
-					kDistances = append(kDistances, pair.distance)
-					util.SortBasedOn(&kNearest, &kDistances)
-					if len(kDistances) > k {
-						kDistances = kDistances[:k]
-						kNearest = kNearest[:k*int(NumOfDimensions)]
-					}
-					furthestKnnSoFar = kDistances[len(kDistances)-1]
+					furthestKnnSoFar = kNearestVectors.Peak().DistanceFromQuery
 				}
 			}
 			continue
@@ -307,15 +296,13 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 
 		distance := util.CalculateL2Norm(query, node.vantagePoint, NumOfDimensions)
 
-		if distance < furthestKnnSoFar {
-			kNearest = append(kNearest, *node.vantagePoint...)
-			kDistances = append(kDistances, distance)
-			util.SortBasedOn(&kNearest, &kDistances)
-			if len(kDistances) > k {
-				kDistances = (kDistances)[:k]
-				kNearest = (kNearest)[:k*int(NumOfDimensions)]
-			}
-			furthestKnnSoFar = (kDistances)[len(kDistances)-1]
+		if distance < furthestKnnSoFar || kNearestVectors.Len() < k {
+			kNearestVectors.Insert(&util.KnnQueueItem{
+				KnnVector:         node.vantagePoint,
+				DistanceFromQuery: distance,
+			})
+
+			furthestKnnSoFar = kNearestVectors.Peak().DistanceFromQuery
 		}
 
 		if distance < node.radius+furthestKnnSoFar && node.inside != nil {
@@ -326,5 +313,5 @@ func (locator VPTreeKnnLocator) SearchKNearest(root *VPTreeNode, query *[]int8, 
 		}
 	}
 
-	return kDistances[:k]
+	return kNearestVectors
 }

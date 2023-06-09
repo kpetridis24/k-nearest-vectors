@@ -5,12 +5,12 @@ dimensions increase -> parallel
 points increase -> VPT
 */
 const (
-	NumOfVectors             uint32 = 200000
-	NumOfDimensions          uint16 = 300
-	Min                             = -50
-	Max                             = 50
+	NumOfVectors             uint32 = 10000
+	NumOfDimensions          uint16 = 3000
+	Min                             = -127
+	Max                             = 127
 	K                               = 20
-	MaxRoutinesForParallel          = 10
-	ThresholdToRunParallel          = 100
-	MaxRoutinesForTreeSearch        = 3000
+	MaxRoutinesForParallel          = 20
+	ThresholdToRunParallel          = 10
+	MaxRoutinesForTreeSearch        = 2000
 )

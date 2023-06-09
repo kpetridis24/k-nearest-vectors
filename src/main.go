@@ -2,6 +2,7 @@ package main
 
 import (
 	"Weaviate/Constants"
+	util "Weaviate/Helpers"
 	knn "Weaviate/KNNLocators"
 	vm "Weaviate/VectorManager"
 	"fmt"
@@ -43,13 +44,5 @@ func main() {
 	elapsed = time.Since(start)
 	fmt.Println("Naive kNN: ", elapsed)
 
-	//validate results
-	for i := 0; i < Constants.K; i++ {
-		if res1[i] != res2[i] || res1[i] != res3[i] || res2[i] != res3[i] {
-			fmt.Println(res1)
-			fmt.Println(res2)
-			fmt.Println(res3)
-			panic("[ERROR]: K nearest neighbors not consistent amongst methods")
-		}
-	}
+	util.ValidateKnnResults(res1, res2, res3)
 }
