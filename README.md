@@ -1,6 +1,6 @@
 # k-nearest-vectors
 
-CPU and memory efficient implementations for calculating k nearest vectors 
+Parallel-Indexed multi-dimensional query engine for efficient vector search 
 
 ## Motivation
 
